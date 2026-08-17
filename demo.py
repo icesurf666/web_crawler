@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from time import perf_counter
 
@@ -49,6 +50,35 @@ def print_results(title: str, results: dict[str, str], elapsed: float) -> None:
     print(f"Total time: {elapsed:.2f} s")
 
 
+def summarize(parsed: dict) -> dict:
+    return {
+        "url": parsed["url"],
+        "title": parsed["title"],
+        "text_length": len(parsed["text"]),
+        "links_count": len(parsed["links"]),
+        "images_count": len(parsed["images"]),
+        "links": parsed["links"][:5],
+    }
+
+
+async def parse_pages(urls: list[str]) -> list[dict]:
+    crawler = AsyncCrawler(max_concurrent=5)
+
+    try:
+        tasks = [crawler.fetch_and_parse(url) for url in urls]
+        parsed_pages = await asyncio.gather(*tasks)
+    finally:
+        await crawler.close()
+
+    return [summarize(page) for page in parsed_pages]
+
+
+def print_summaries(title: str, summaries: list[dict]) -> None:
+    print(f"\n{title}")
+    for summary in summaries:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
 async def main() -> None:
     sequential_results, sequential_time = await fetch_sequentially(URLS)
     print_results("Sequential fetching", sequential_results, sequential_time)
@@ -59,6 +89,9 @@ async def main() -> None:
     if concurrent_time > 0:
         speedup = sequential_time / concurrent_time
         print(f"\nSpeedup: {speedup:.2f}x")
+
+    summaries = await parse_pages(URLS)
+    print_summaries("Parsing demo", summaries)
 
 
 if __name__ == "__main__":
