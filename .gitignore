@@ -11,5 +11,8 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Crawl output
+crawl_results.json
+
 # macOS
 .DS_Store
