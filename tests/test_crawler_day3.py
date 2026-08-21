@@ -11,6 +11,8 @@ def make_html(links: list[str]) -> str:
 
 
 def fake_crawler(pages: dict[str, list[str]], **kwargs):
+    kwargs.setdefault("respect_robots", False)
+    kwargs.setdefault("requests_per_second", 1000)
     crawler = AsyncCrawler(**kwargs)
     fetch_counts: dict[str, int] = {}
 
