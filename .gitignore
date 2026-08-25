@@ -16,3 +16,6 @@ crawl_results.json
 
 # macOS
 .DS_Store
+
+# Day 5 demo output
+error_report.json

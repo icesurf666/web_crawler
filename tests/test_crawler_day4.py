@@ -41,7 +41,11 @@ class _FlakySession:
 
     def get(self, url: str) -> _FakeGet:
         self.calls += 1
-        error = aiohttp.ClientConnectionError("boom") if self.calls <= self._fail_times else None
+        error = (
+            aiohttp.ClientConnectionError("boom")
+            if self.calls <= self._fail_times
+            else None
+        )
         return _FakeGet(error)
 
     async def close(self) -> None:
@@ -141,7 +145,9 @@ async def test_backoff_retries_on_transient_error(monkeypatch) -> None:
     crawler = AsyncCrawler()
     crawler.session = _FlakySession(fail_times=2)
 
-    body = await crawler.fetch_url("http://x", retries=3)
+    body = await crawler.retry_strategy.execute_with_retry(
+        crawler.fetch_url, "http://x"
+    )
 
     assert body == "OK"
     assert crawler.session.calls == 3
@@ -166,9 +172,7 @@ async def test_global_rate_limit() -> None:
 @pytest.mark.asyncio
 async def test_speed_stats_reports_requests() -> None:
     pages = {
-        "http://site/": (
-            '<a href="http://site/a">a</a><a href="http://site/b">b</a>'
-        ),
+        "http://site/": ('<a href="http://site/a">a</a><a href="http://site/b">b</a>'),
     }
     crawler = crawler_with_pages(pages, respect_robots=False)
 

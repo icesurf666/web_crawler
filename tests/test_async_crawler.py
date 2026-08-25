@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from time import perf_counter
 
 import aiohttp
@@ -8,6 +7,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from async_crawler import AsyncCrawler
+from errors import PermanentError, TransientError
 
 
 class TestAsyncCrawler:
@@ -34,9 +34,7 @@ class TestAsyncCrawler:
         assert content == "Hello world!"
 
     @pytest.mark.asyncio
-    async def test_fetch_nonexistent_url(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_fetch_nonexistent_url(self) -> None:
         async def missing_page(_request: web.Request) -> web.Response:
             return web.Response(status=404, text="Page not found")
 
@@ -50,18 +48,17 @@ class TestAsyncCrawler:
         crawler = AsyncCrawler(max_concurrent=1)
 
         try:
-            with caplog.at_level(logging.WARNING, logger="async_crawler"):
-                content = await crawler.fetch_url(url)
+            with pytest.raises(PermanentError) as exc_info:
+                await crawler.fetch_url(url)
         finally:
             await crawler.close()
             await server.close()
 
-        assert content == ""
-        assert "HTTP error" in caplog.text
-        assert url in caplog.text
+        assert exc_info.value.status == 404
+        assert exc_info.value.url == url
 
     @pytest.mark.asyncio
-    async def test_timeout(self, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_timeout(self) -> None:
         async def slow_page(_request: web.Request) -> web.Response:
             await asyncio.sleep(0.2)
             return web.Response(text="Slow response")
@@ -77,15 +74,13 @@ class TestAsyncCrawler:
         crawler.timeout = aiohttp.ClientTimeout(connect=1, sock_read=0.05)
 
         try:
-            with caplog.at_level(logging.WARNING, logger="async_crawler"):
-                content = await crawler.fetch_url(url)
+            with pytest.raises(TransientError) as exc_info:
+                await crawler.fetch_url(url)
         finally:
             await crawler.close()
             await server.close()
 
-        assert content == ""
-        assert "Timeout" in caplog.text
-        assert url in caplog.text
+        assert exc_info.value.url == url
 
     @pytest.mark.asyncio
     async def test_parallel_is_faster_than_sequential(self) -> None:
