@@ -7,6 +7,10 @@ class CrawlerError(Exception):
         self.status = status
 
 
+class StorageError(CrawlerError):
+    pass
+
+
 class TransientError(CrawlerError):
     pass
 

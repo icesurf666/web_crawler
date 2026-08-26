@@ -1,5 +1,6 @@
 aiohttp
 aiofiles
+asyncpg
 pytest
 pytest-asyncio
 beautifulsoup4

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from time import perf_counter
 from urllib.parse import urlsplit
 
@@ -11,6 +12,7 @@ from errors import (
     CrawlerError,
     NetworkError,
     ParseError,
+    StorageError,
     TransientError,
     classify_status,
 )
@@ -19,9 +21,18 @@ from rate_limiter import RateLimiter
 from retry_strategy import RetryStrategy
 from robots_parser import RobotsParser
 from semaphore_manager import SemaphoreManager
+from storage import DataStorage
 from url_filter import URLFilter
 
 logger = logging.getLogger(__name__)
+
+
+class FetchResult(str):
+    def __new__(cls, text: str, status: int = 200, content_type: str = ""):
+        result = super().__new__(cls, text)
+        result.status = status
+        result.content_type = content_type
+        return result
 
 
 class AsyncCrawler:
@@ -41,6 +52,7 @@ class AsyncCrawler:
         read_timeout: float = 30.0,
         total_timeout: float | None = None,
         timeout_growth: float = 1.0,
+        storage: DataStorage | None = None,
     ):
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be greater than zero")
@@ -63,6 +75,9 @@ class AsyncCrawler:
         )
         self.retry_strategy = retry_strategy or RetryStrategy()
         self.circuit_breaker = circuit_breaker
+        self.storage = storage
+        self._storage_retry = RetryStrategy(retry_on=[StorageError])
+        self._storage_ready = False
         self.respect_robots = respect_robots
         self.user_agent = user_agent
         self.robots = RobotsParser(self._fetch_robots_text)
@@ -98,9 +113,11 @@ class AsyncCrawler:
             async with self.session.get(url, **get_kwargs) as response:
                 response.raise_for_status()
                 content = await response.text()
+                status = response.status
+                content_type = response.headers.get("Content-Type", "")
 
             logger.debug("Fetching completed: %s", url)
-            return content
+            return FetchResult(content, status, content_type)
         except aiohttp.ClientResponseError as error:
             raise classify_status(error.status, url) from error
         except asyncio.TimeoutError as error:
@@ -119,11 +136,19 @@ class AsyncCrawler:
 
         return dict(zip(urls, content))
 
+    async def _ensure_storage_ready(self) -> None:
+        if self.storage is not None and not self._storage_ready:
+            await self.storage.init()
+            self._storage_ready = True
+
     async def close(self) -> None:
         if self.session is not None and not self.session.closed:
             await self.session.close()
 
         self.session = None
+
+        if self.storage is not None:
+            await self.storage.close()
 
     async def _fetch_robots_text(self, url: str) -> str:
         try:
@@ -193,6 +218,9 @@ class AsyncCrawler:
         if self.circuit_breaker is not None:
             self.circuit_breaker.record_success(domain)
 
+        status_code = getattr(page, "status", 200)
+        content_type = getattr(page, "content_type", "")
+
         try:
             result = await HTMLParser().parse_html(page, url)
         except Exception as error:  # noqa: BLE001
@@ -206,7 +234,40 @@ class AsyncCrawler:
 
         self.processed_urls[url] = result
         queue.mark_processed(url)
+
+        await self._save_record(url, result, status_code, content_type)
+
         return result
+
+    def _build_record(
+        self, url: str, result: dict, status_code: int, content_type: str
+    ) -> dict:
+        metadata = dict(result.get("metadata", {}))
+        for extra in ("headings", "images", "lists", "tables"):
+            metadata[extra] = result.get(extra, [])
+
+        return {
+            "url": url,
+            "title": result.get("title", ""),
+            "text": result.get("text", ""),
+            "links": result.get("links", []),
+            "metadata": metadata,
+            "crawled_at": datetime.now(timezone.utc),
+            "status_code": status_code,
+            "content_type": content_type,
+        }
+
+    async def _save_record(
+        self, url: str, result: dict, status_code: int, content_type: str
+    ) -> None:
+        if self.storage is None:
+            return
+
+        record = self._build_record(url, result, status_code, content_type)
+        try:
+            await self._storage_retry.execute_with_retry(self.storage.save, record)
+        except CrawlerError as error:
+            logger.warning("Failed to save %s: %s", url, error)
 
     async def crawl(
         self,
@@ -216,6 +277,8 @@ class AsyncCrawler:
         exclude_patterns: list[str] | None = None,
         include_patterns: list[str] | None = None,
     ) -> dict:
+        await self._ensure_storage_ready()
+
         started_at = perf_counter()
         queue = CrawlerQueue()
         url_filter = URLFilter(

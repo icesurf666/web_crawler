@@ -13,6 +13,10 @@ from robots_parser import RobotsParser
 
 
 class _FakeResponse:
+    def __init__(self) -> None:
+        self.status = 200
+        self.headers = {}
+
     def raise_for_status(self) -> None:
         pass
 

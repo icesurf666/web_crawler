@@ -11,11 +11,12 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Crawl output
+# Crawl / demo output
+*.jsonl
+*.csv
 crawl_results.json
+error_report.json
+pretty.json
 
 # macOS
 .DS_Store
-
-# Day 5 demo output
-error_report.json
