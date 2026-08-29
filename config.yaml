@@ -1,0 +1,55 @@
+# Crawler settings. Pass this file with --config.
+
+# Where to start
+start_urls:
+  - https://example.com
+# sitemap_url: https://example.com/sitemap.xml   # optional seed source
+
+# Crawl limits
+max_pages: 100
+max_depth: 2
+max_concurrent: 10
+per_domain_limit: 2
+
+# Politeness
+requests_per_second: 2.0
+respect_robots: true
+user_agent: MyBot/1.0
+min_delay: 0.0
+jitter: 0.0
+
+# Filters
+same_domain_only: true
+exclude_patterns:
+  - "/logout"
+  - "\\.pdf$"
+include_patterns: []
+
+# Where to save results — use any of these, or none
+output_json: results.jsonl
+output_csv: results.csv
+# postgres_dsn: postgresql://mac@localhost/web_crawler
+
+# Timeouts (seconds)
+connect_timeout: 10.0
+read_timeout: 30.0
+# total_timeout: 60.0        # cap on the whole request; null = no cap
+timeout_growth: 1.0          # >1.0 gives each retry a longer timeout
+
+# Retries
+max_retries: 3
+backoff_factor: 2.0          # wait grows by this factor between attempts
+
+# Circuit breaker (skip a domain that keeps failing)
+circuit_breaker: false
+circuit_failure_threshold: 5
+circuit_recovery_time: 30.0
+
+# Logging
+log_file: crawler.log
+log_level: INFO
+
+# Optional
+# proxy: http://127.0.0.1:8080
+# cookies:
+#   session: abc123

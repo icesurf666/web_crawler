@@ -8,6 +8,7 @@ import aiohttp
 
 from circuit_breaker import CircuitBreaker
 from crawler_queue import CrawlerQueue
+from crawler_stats import CrawlerStats
 from errors import (
     CrawlerError,
     NetworkError,
@@ -53,6 +54,9 @@ class AsyncCrawler:
         total_timeout: float | None = None,
         timeout_growth: float = 1.0,
         storage: DataStorage | None = None,
+        stats: CrawlerStats | None = None,
+        proxy: str | None = None,
+        cookies: dict | None = None,
     ):
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be greater than zero")
@@ -76,6 +80,9 @@ class AsyncCrawler:
         self.retry_strategy = retry_strategy or RetryStrategy()
         self.circuit_breaker = circuit_breaker
         self.storage = storage
+        self.stats = stats
+        self.proxy = proxy
+        self.cookies = cookies
         self._storage_retry = RetryStrategy(retry_on=[StorageError])
         self._storage_ready = False
         self.respect_robots = respect_robots
@@ -83,6 +90,7 @@ class AsyncCrawler:
         self.robots = RobotsParser(self._fetch_robots_text)
         self.blocked_urls: list[str] = []
         self.request_times: list[float] = []
+        self.active_requests: int = 0
 
         self.max_depth = max_depth
         self.visited_urls: set[str] = set()
@@ -105,10 +113,13 @@ class AsyncCrawler:
             self.session = aiohttp.ClientSession(
                 timeout=self.timeout,
                 headers={"User-Agent": self.user_agent},
+                cookies=self.cookies,
             )
 
         logger.debug("Fetching started: %s", url)
         get_kwargs = {} if timeout is None else {"timeout": timeout}
+        if self.proxy is not None:
+            get_kwargs["proxy"] = self.proxy
         try:
             async with self.session.get(url, **get_kwargs) as response:
                 response.raise_for_status()
@@ -189,6 +200,7 @@ class AsyncCrawler:
 
         self.request_times.append(perf_counter())
 
+        self.active_requests += 1
         try:
             async with self.sem_manager.acquire(domain):
                 if self.timeout_growth > 1.0:
@@ -213,7 +225,11 @@ class AsyncCrawler:
             queue.mark_failed(url, reason)
             if self.circuit_breaker is not None:
                 self.circuit_breaker.record_failure(domain)
+            if self.stats is not None:
+                self.stats.record_failure(url, getattr(error, "status", None))
             return None
+        finally:
+            self.active_requests -= 1
 
         if self.circuit_breaker is not None:
             self.circuit_breaker.record_success(domain)
@@ -230,10 +246,15 @@ class AsyncCrawler:
             self.retry_strategy.stats.record_error(parse_error)
             self.failed_urls[url] = reason
             queue.mark_failed(url, reason)
+            if self.stats is not None:
+                self.stats.record_failure(url, status_code)
             return None
 
         self.processed_urls[url] = result
         queue.mark_processed(url)
+
+        if self.stats is not None:
+            self.stats.record_success(url, status_code)
 
         await self._save_record(url, result, status_code, content_type)
 

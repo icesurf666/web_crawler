@@ -11,12 +11,15 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Crawl / demo output
+# Crawl / demo / report output
 *.jsonl
 *.csv
+*.html
+*.log
 crawl_results.json
 error_report.json
 pretty.json
+stats.json
 
 # macOS
 .DS_Store

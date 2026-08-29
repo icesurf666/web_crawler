@@ -100,7 +100,7 @@ async def main() -> None:
     results = await crawler.crawl(["http://demo.local/"], max_pages=20)
     await crawler.close()
 
-    print("\n=== Day 6: storage summary ===")
+    print("\n=== Storage summary ===")
     print(f"Processed pages : {len(results)}")
     print(f"JSON file       : {JSON_PATH}")
     print(f"CSV file        : {CSV_PATH}")

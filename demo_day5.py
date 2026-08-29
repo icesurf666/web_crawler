@@ -53,7 +53,7 @@ class FlakySite:
 
 
 def print_report(crawler: AsyncCrawler, stats: dict) -> None:
-    print("\n=== Day 5: error handling summary ===")
+    print("\n=== Error handling summary ===")
     print(f"Processed pages   : {len(crawler.processed_urls)}")
     print(f"Failed URLs       : {len(stats['failed_urls'])}")
     print(f"Errors by type    : {stats['errors_by_type']}")
