@@ -13,7 +13,6 @@ from errors import (
     CrawlerError,
     NetworkError,
     ParseError,
-    StorageError,
     TransientError,
     classify_status,
 )
@@ -83,7 +82,6 @@ class AsyncCrawler:
         self.stats = stats
         self.proxy = proxy
         self.cookies = cookies
-        self._storage_retry = RetryStrategy(retry_on=[StorageError])
         self._storage_ready = False
         self.respect_robots = respect_robots
         self.user_agent = user_agent
@@ -162,6 +160,9 @@ class AsyncCrawler:
             await self.storage.close()
 
     async def _fetch_robots_text(self, url: str) -> str:
+        # Rate-limit the robots.txt request too — it's a request to the host like
+        # any other. Cached per domain, so this costs one extra wait per domain.
+        await self.rate_limiter.acquire(urlsplit(url).hostname)
         try:
             return await self.fetch_url(url)
         except CrawlerError as error:
@@ -286,7 +287,7 @@ class AsyncCrawler:
 
         record = self._build_record(url, result, status_code, content_type)
         try:
-            await self._storage_retry.execute_with_retry(self.storage.save, record)
+            await self.storage.save(record)
         except CrawlerError as error:
             logger.warning("Failed to save %s: %s", url, error)
 
@@ -299,6 +300,9 @@ class AsyncCrawler:
         include_patterns: list[str] | None = None,
     ) -> dict:
         await self._ensure_storage_ready()
+
+        if not start_urls:
+            return self.processed_urls
 
         started_at = perf_counter()
         queue = CrawlerQueue()

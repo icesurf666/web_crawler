@@ -17,6 +17,7 @@ from storage import (
     DataStorage,
     JSONStorage,
     PostgresStorage,
+    RetryingStorage,
 )
 
 PG_DSN = os.environ.get(
@@ -141,6 +142,37 @@ async def test_composite_one_failure_does_not_stop_others():
 
 
 @pytest.mark.asyncio
+async def test_retry_wraps_leaves_without_duplicating(no_sleep):
+    class FlakyOnce(DataStorage):
+        def __init__(self):
+            self.calls = 0
+            self.saved = []
+
+        async def save(self, data):
+            self.calls += 1
+            if self.calls == 1:
+                raise StorageError("temporary")
+            self.saved.append(data)
+
+        async def close(self):
+            pass
+
+    recording = _RecordingStorage()
+    flaky = FlakyOnce()
+    composite = CompositeStorage(
+        [RetryingStorage(recording), RetryingStorage(flaky)]
+    )
+
+    await composite.save({"url": "http://a"})
+
+    # the storage that succeeded first is written exactly once, not re-written
+    # while the flaky one retries
+    assert recording.saved == [{"url": "http://a"}]
+    assert flaky.calls == 2
+    assert flaky.saved == [{"url": "http://a"}]
+
+
+@pytest.mark.asyncio
 async def test_crawl_saves_standard_record(tmp_path, no_sleep):
     path = tmp_path / "c.jsonl"
     crawler = AsyncCrawler(
@@ -244,7 +276,7 @@ async def test_save_is_retried_on_storage_error(no_sleep):
         respect_robots=False,
         requests_per_second=1000,
         max_depth=0,
-        storage=storage,
+        storage=RetryingStorage(storage),
     )
 
     async def fake(url):

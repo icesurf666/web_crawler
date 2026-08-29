@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import contextmanager
 from urllib.parse import urldefrag, urljoin, urlsplit
@@ -17,6 +18,12 @@ def safe(step):
 
 class HTMLParser:
     async def parse_html(self, html: str, url: str) -> dict:
+        # BeautifulSoup is synchronous and CPU-bound; run it in a thread so it
+        # doesn't block the event loop and stall concurrent fetches.
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._parse_sync, html, url)
+
+    def _parse_sync(self, html: str, url: str) -> dict:
         result = {
             "url": url,
             "title": "",

@@ -10,7 +10,13 @@ from crawler_stats import CrawlerStats
 from progress import ProgressMonitor
 from retry_strategy import RetryStrategy
 from sitemap_parser import SitemapParser
-from storage import CompositeStorage, CSVStorage, JSONStorage, PostgresStorage
+from storage import (
+    CompositeStorage,
+    CSVStorage,
+    JSONStorage,
+    PostgresStorage,
+    RetryingStorage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,10 @@ def _build_storage(config: Config):
 
     if not storages:
         return None
+
+    # Retry each leaf independently, then compose — retrying a composite would
+    # re-write to already-succeeded storages and duplicate records.
+    storages = [RetryingStorage(storage) for storage in storages]
     if len(storages) == 1:
         return storages[0]
     return CompositeStorage(storages)

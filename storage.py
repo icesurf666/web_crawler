@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 
@@ -10,8 +11,11 @@ import aiofiles
 import asyncpg
 
 from errors import StorageError
+from retry_strategy import RetryStrategy
 
 logger = logging.getLogger(__name__)
+
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def _json_default(obj):
@@ -143,9 +147,15 @@ class PostgresStorage(DataStorage):
     )
 
     def __init__(self, dsn: str, table: str = "pages", batch_size: int = 50) -> None:
+        # Table name is interpolated into SQL (identifiers can't be parameterized),
+        # so allow only a plain identifier to keep it injection-safe.
+        if not _IDENTIFIER.fullmatch(table):
+            raise ValueError(f"invalid table name: {table!r}")
+
         self.dsn = dsn
         self.table = table
         self.batch_size = batch_size
+        self.max_buffer = batch_size * 10
         self._pool = None
         self._buffer: list[tuple] = []
         self._lock = asyncio.Lock()
@@ -216,6 +226,10 @@ class PostgresStorage(DataStorage):
         try:
             await self._flush()
         except StorageError as error:
+            overflow = len(self._buffer) - self.max_buffer
+            if overflow > 0:
+                del self._buffer[:overflow]
+                logger.error("Postgres buffer full, dropped %d oldest rows", overflow)
             logger.warning(
                 "Postgres flush failed, %d rows kept for retry: %s",
                 len(self._buffer),
@@ -225,6 +239,11 @@ class PostgresStorage(DataStorage):
     async def close(self) -> None:
         async with self._lock:
             await self._flush_safely()
+            if self._buffer:
+                logger.error(
+                    "Postgres closing with %d unsaved rows (data lost)",
+                    len(self._buffer),
+                )
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
@@ -257,3 +276,25 @@ class CompositeStorage(DataStorage):
         for result in results:
             if isinstance(result, Exception):
                 logger.warning("storage close failed: %s", result)
+
+
+class RetryingStorage(DataStorage):
+    """Retries a single storage's writes on StorageError.
+
+    Retrying must wrap each leaf storage, not a CompositeStorage: retrying a
+    composite would re-write to the storages that already succeeded and create
+    duplicates. Wrap the leaves, then compose.
+    """
+
+    def __init__(self, inner: DataStorage, retry: RetryStrategy | None = None) -> None:
+        self._inner = inner
+        self._retry = retry or RetryStrategy(retry_on=[StorageError])
+
+    async def init(self) -> None:
+        await self._inner.init()
+
+    async def save(self, data: dict) -> None:
+        await self._retry.execute_with_retry(self._inner.save, data)
+
+    async def close(self) -> None:
+        await self._inner.close()

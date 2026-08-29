@@ -13,8 +13,11 @@ class URLFilter:
         self.domain = urlsplit(base_url).hostname
         self.same_domain_only = same_domain_only
 
-        self._exclude = [re.compile(p) for p in (exclude_patterns or [])]
-        self._include = [re.compile(p) for p in (include_patterns or [])]
+        try:
+            self._exclude = [re.compile(p) for p in (exclude_patterns or [])]
+            self._include = [re.compile(p) for p in (include_patterns or [])]
+        except re.error as error:
+            raise ValueError(f"invalid URL filter pattern: {error}") from error
 
     def allows(self, url: str) -> bool:
         if self.same_domain_only and urlsplit(url).hostname != self.domain:

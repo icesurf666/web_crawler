@@ -2,11 +2,13 @@ import json
 
 import pytest
 
+from async_crawler import AsyncCrawler
 from config import Config
 from crawler import AdvancedCrawler, _config_from_args, build_parser
 from crawler_stats import CrawlerStats
 from errors import PermanentError
 from sitemap_parser import SitemapParser
+from url_filter import URLFilter
 
 NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
 
@@ -128,6 +130,19 @@ def test_cli_args_override_config():
     assert config.start_urls == ["http://a", "http://b"]
     assert config.max_pages == 50
     assert config.respect_robots is False
+
+
+@pytest.mark.asyncio
+async def test_crawl_with_no_urls_returns_empty():
+    crawler = AsyncCrawler(respect_robots=False)
+    result = await crawler.crawl([])
+    await crawler.close()
+    assert result == {}
+
+
+def test_url_filter_rejects_bad_pattern():
+    with pytest.raises(ValueError):
+        URLFilter("http://x", exclude_patterns=["("])
 
 
 def test_config_wires_engine_options():

@@ -90,7 +90,9 @@ async def run_scale(page_count: int) -> None:
 
 
 async def main() -> None:
-    print("Async vs sync crawler benchmark (local server)\n")
+    print("Async vs sync crawler benchmark (local server)")
+    print("Note: the sync baseline only fetches; the async crawler also parses "
+          "HTML, so the comparison is end-to-end crawl, not fetch-for-fetch.\n")
     for page_count in (100, 500, 1000):
         await run_scale(page_count)
 
