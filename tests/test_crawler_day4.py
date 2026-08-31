@@ -12,16 +12,23 @@ from rate_limiter import RateLimiter
 from robots_parser import RobotsParser
 
 
+class _FakeContent:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def iter_chunked(self, _size: int):
+        yield self._data
+
+
 class _FakeResponse:
     def __init__(self) -> None:
         self.status = 200
         self.headers = {}
+        self.charset = "utf-8"
+        self.content = _FakeContent(b"OK")
 
     def raise_for_status(self) -> None:
         pass
-
-    async def text(self) -> str:
-        return "OK"
 
 
 class _FakeGet:
@@ -146,7 +153,7 @@ async def test_backoff_retries_on_transient_error(monkeypatch) -> None:
 
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
 
-    crawler = AsyncCrawler()
+    crawler = AsyncCrawler(allow_private_hosts=True)
     crawler.session = _FlakySession(fail_times=2)
 
     body = await crawler.retry_strategy.execute_with_retry(
@@ -215,7 +222,7 @@ async def test_user_agent_header_is_set() -> None:
     await server.start_server()
 
     url = str(server.make_url("/ua"))
-    crawler = AsyncCrawler(user_agent="TestBot/9.9")
+    crawler = AsyncCrawler(user_agent="TestBot/9.9", allow_private_hosts=True)
 
     try:
         body = await crawler.fetch_url(url)

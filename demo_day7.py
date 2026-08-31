@@ -49,6 +49,7 @@ async def main() -> None:
         respect_robots=False,
         same_domain_only=True,
         output_json="results.jsonl",
+        allow_private_hosts=True,
     )
     crawler = AdvancedCrawler(config)
 

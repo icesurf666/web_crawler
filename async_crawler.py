@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import socket
 from datetime import datetime, timezone
 from time import perf_counter
 from urllib.parse import urlsplit
@@ -13,10 +14,12 @@ from errors import (
     CrawlerError,
     NetworkError,
     ParseError,
+    PermanentError,
     TransientError,
     classify_status,
 )
 from html_parser import HTMLParser
+from net_guard import is_blocked_ip
 from rate_limiter import RateLimiter
 from retry_strategy import RetryStrategy
 from robots_parser import RobotsParser
@@ -56,6 +59,8 @@ class AsyncCrawler:
         stats: CrawlerStats | None = None,
         proxy: str | None = None,
         cookies: dict | None = None,
+        allow_private_hosts: bool = False,
+        max_page_bytes: int = 5_000_000,
     ):
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be greater than zero")
@@ -82,6 +87,9 @@ class AsyncCrawler:
         self.stats = stats
         self.proxy = proxy
         self.cookies = cookies
+        self.allow_private_hosts = allow_private_hosts
+        self.max_page_bytes = max_page_bytes
+        self._allowed_hosts: set[str] = set()
         self._storage_ready = False
         self.respect_robots = respect_robots
         self.user_agent = user_agent
@@ -104,9 +112,53 @@ class AsyncCrawler:
             total=self.total_timeout * factor if self.total_timeout else None,
         )
 
+    async def _check_host_allowed(self, url: str) -> None:
+        # Block requests to private/loopback/metadata addresses so a crawled page
+        # can't point us at internal services (SSRF). Not airtight against DNS
+        # rebinding, but stops the common cases. Validated hosts are cached.
+        if self.allow_private_hosts:
+            return
+        host = urlsplit(url).hostname
+        if host is None or host in self._allowed_hosts:
+            return
+        if is_blocked_ip(host):
+            raise PermanentError(f"blocked non-public host: {host}", url=url)
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+        except socket.gaierror:
+            return  # let the real request surface a NetworkError
+        for info in infos:
+            ip = info[4][0]
+            if is_blocked_ip(ip):
+                raise PermanentError(
+                    f"blocked non-public host: {host} -> {ip}", url=url
+                )
+        self._allowed_hosts.add(host)
+
+    async def _read_capped(self, response: aiohttp.ClientResponse, url: str) -> str:
+        length = response.headers.get("Content-Length")
+        if length and length.isdigit() and int(length) > self.max_page_bytes:
+            raise PermanentError(
+                f"page too large ({length} bytes)", url=url, status=response.status
+            )
+        chunks = []
+        total = 0
+        async for chunk in response.content.iter_chunked(65536):
+            total += len(chunk)
+            if total > self.max_page_bytes:
+                raise PermanentError(
+                    f"page exceeds {self.max_page_bytes} bytes",
+                    url=url,
+                    status=response.status,
+                )
+            chunks.append(chunk)
+        return b"".join(chunks).decode(response.charset or "utf-8", errors="replace")
+
     async def fetch_url(
         self, url: str, timeout: aiohttp.ClientTimeout | None = None
     ) -> str:
+        await self._check_host_allowed(url)
+
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 timeout=self.timeout,
@@ -121,9 +173,9 @@ class AsyncCrawler:
         try:
             async with self.session.get(url, **get_kwargs) as response:
                 response.raise_for_status()
-                content = await response.text()
                 status = response.status
                 content_type = response.headers.get("Content-Type", "")
+                content = await self._read_capped(response, url)
 
             logger.debug("Fetching completed: %s", url)
             return FetchResult(content, status, content_type)

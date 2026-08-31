@@ -42,6 +42,7 @@ async def bench_async(base_url: str, page_count: int) -> tuple[int, float]:
         per_domain_limit=50,
         requests_per_second=1_000_000,
         respect_robots=False,
+        allow_private_hosts=True,
     )
     started = time.monotonic()
     await crawler.crawl([base_url], max_pages=page_count + 1, same_domain_only=True)

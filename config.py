@@ -36,6 +36,8 @@ class Config:
     circuit_recovery_time: float = 30.0
     proxy: str | None = None
     cookies: dict | None = None
+    allow_private_hosts: bool = False
+    max_page_bytes: int = 5_000_000
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":

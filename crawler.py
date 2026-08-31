@@ -96,6 +96,8 @@ class AdvancedCrawler:
             stats=self.stats,
             proxy=config.proxy,
             cookies=config.cookies,
+            allow_private_hosts=config.allow_private_hosts,
+            max_page_bytes=config.max_page_bytes,
         )
         self.sitemap = SitemapParser(self.crawler.fetch_url)
 

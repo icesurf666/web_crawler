@@ -45,6 +45,10 @@ circuit_breaker: false
 circuit_failure_threshold: 5
 circuit_recovery_time: 30.0
 
+# Safety
+allow_private_hosts: false   # true lets the crawler reach localhost/internal IPs
+max_page_bytes: 5000000      # skip pages larger than this (bytes)
+
 # Logging
 log_file: crawler.log
 log_level: INFO

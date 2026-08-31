@@ -24,6 +24,8 @@ module and can be read on its own.
   a standalone HTML report
 - Reads its settings from a YAML/JSON file or command-line flags
 - Logs to a file and the console, and shows live progress while it runs
+- Won't follow links into private/loopback/metadata addresses (SSRF guard),
+  and caps how much it reads per page so a huge response can't exhaust memory
 
 ## Setup
 
@@ -99,6 +101,8 @@ back to the default below. Command-line flags win over the file.
 | `circuit_breaker` | `false` | Turn the per-domain breaker on |
 | `circuit_failure_threshold` | `5` | Failures before a domain is skipped |
 | `circuit_recovery_time` | `30.0` | Seconds before it's given another try |
+| `allow_private_hosts` | `false` | Let the crawler reach localhost / internal IPs |
+| `max_page_bytes` | `5000000` | Skip pages larger than this |
 | `log_file` | `null` | Log file (rotated) |
 | `log_level` | `INFO` | Log level |
 | `proxy` | `null` | HTTP proxy URL |
@@ -150,6 +154,7 @@ Flags override whatever `--config` set.
 | `crawler_stats.py` | Stats and the JSON/HTML export |
 | `config.py` | Loading the config file |
 | `progress.py` | The live progress line |
+| `net_guard.py` | Classifying private/reserved IPs for the SSRF guard |
 
 ## Tests
 

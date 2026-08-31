@@ -224,6 +224,7 @@ async def test_crawl_captures_real_status_and_content_type(tmp_path):
         requests_per_second=1000,
         max_depth=0,
         storage=JSONStorage(str(path)),
+        allow_private_hosts=True,
     )
     try:
         await crawler.crawl([url], max_pages=1)

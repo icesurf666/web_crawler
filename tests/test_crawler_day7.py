@@ -1,7 +1,10 @@
 import json
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
+import net_guard
 from async_crawler import AsyncCrawler
 from config import Config
 from crawler import AdvancedCrawler, _config_from_args, build_parser
@@ -130,6 +133,43 @@ def test_cli_args_override_config():
     assert config.start_urls == ["http://a", "http://b"]
     assert config.max_pages == 50
     assert config.respect_robots is False
+
+
+def test_is_blocked_ip():
+    assert net_guard.is_blocked_ip("127.0.0.1")
+    assert net_guard.is_blocked_ip("10.0.0.5")
+    assert net_guard.is_blocked_ip("192.168.1.1")
+    assert net_guard.is_blocked_ip("169.254.169.254")  # cloud metadata
+    assert net_guard.is_blocked_ip("::1")
+    assert not net_guard.is_blocked_ip("8.8.8.8")
+    assert not net_guard.is_blocked_ip("example.com")  # not an IP literal
+
+
+@pytest.mark.asyncio
+async def test_fetch_blocks_private_host():
+    crawler = AsyncCrawler()  # allow_private_hosts defaults to False
+    with pytest.raises(PermanentError):
+        await crawler.fetch_url("http://169.254.169.254/latest/meta-data/")
+    await crawler.close()
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_oversized_page():
+    async def big(_request):
+        return web.Response(body=b"x" * 10_000, content_type="text/html")
+
+    app = web.Application()
+    app.router.add_get("/", big)
+    server = TestServer(app)
+    await server.start_server()
+
+    crawler = AsyncCrawler(allow_private_hosts=True, max_page_bytes=1000)
+    try:
+        with pytest.raises(PermanentError):
+            await crawler.fetch_url(str(server.make_url("/")))
+    finally:
+        await crawler.close()
+        await server.close()
 
 
 @pytest.mark.asyncio
