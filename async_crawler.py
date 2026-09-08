@@ -159,6 +159,16 @@ class AsyncCrawler:
     ) -> str:
         await self._check_host_allowed(url)
 
+        # Politeness is enforced here so EVERY request obeys it — direct calls,
+        # batch fetches, retries and robots.txt alike (days 4-5).
+        domain = urlsplit(url).hostname
+        crawl_delay = (
+            self.robots.get_crawl_delay(url, self.user_agent)
+            if self.respect_robots
+            else 0.0
+        )
+        await self.rate_limiter.acquire(domain, crawl_delay)
+
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 timeout=self.timeout,
@@ -191,7 +201,11 @@ class AsyncCrawler:
 
         async def bounded_fetch(url: str) -> str:
             async with semaphore:
-                return await self.fetch_url(url)
+                try:
+                    return await self.fetch_url(url)
+                except CrawlerError as error:
+                    logger.warning("Fetch failed for %s: %s", url, error)
+                    return ""
 
         content = await asyncio.gather(*(bounded_fetch(url) for url in urls))
 
@@ -212,9 +226,7 @@ class AsyncCrawler:
             await self.storage.close()
 
     async def _fetch_robots_text(self, url: str) -> str:
-        # Rate-limit the robots.txt request too — it's a request to the host like
-        # any other. Cached per domain, so this costs one extra wait per domain.
-        await self.rate_limiter.acquire(urlsplit(url).hostname)
+        # fetch_url already rate-limits; robots.txt is just another request.
         try:
             return await self.fetch_url(url)
         except CrawlerError as error:
@@ -234,14 +246,12 @@ class AsyncCrawler:
 
         domain = urlsplit(url).hostname
 
-        crawl_delay = 0.0
         if self.respect_robots:
             await self.robots.fetch_robots(url)
             if not self.robots.can_fetch(url, self.user_agent):
                 logger.info("Blocked by robots.txt: %s", url)
                 self.blocked_urls.append(url)
                 return None
-            crawl_delay = self.robots.get_crawl_delay(url, self.user_agent)
 
         if self.circuit_breaker is not None and not self.circuit_breaker.allow(domain):
             logger.warning("Circuit open, skipping %s", url)
@@ -249,28 +259,20 @@ class AsyncCrawler:
             queue.mark_failed(url, "circuit open")
             return None
 
-        await self.rate_limiter.acquire(domain, crawl_delay)
-
-        self.request_times.append(perf_counter())
-
         self.active_requests += 1
         try:
             async with self.sem_manager.acquire(domain):
-                if self.timeout_growth > 1.0:
-                    attempt = {"n": 0}
+                attempt = {"n": 0}
 
-                    async def fetch_with_growing_timeout() -> str:
+                async def fetch_once() -> str:
+                    self.request_times.append(perf_counter())
+                    if self.timeout_growth > 1.0:
                         timeout = self._timeout_for_attempt(attempt["n"])
                         attempt["n"] += 1
                         return await self.fetch_url(url, timeout=timeout)
+                    return await self.fetch_url(url)
 
-                    page = await self.retry_strategy.execute_with_retry(
-                        fetch_with_growing_timeout
-                    )
-                else:
-                    page = await self.retry_strategy.execute_with_retry(
-                        self.fetch_url, url
-                    )
+                page = await self.retry_strategy.execute_with_retry(fetch_once)
         except CrawlerError as error:
             reason = f"{type(error).__name__}: {error}"
             logger.warning("Fetch failed for %s: %s", url, reason)
@@ -359,7 +361,7 @@ class AsyncCrawler:
         started_at = perf_counter()
         queue = CrawlerQueue()
         url_filter = URLFilter(
-            start_urls[0],
+            start_urls,
             same_domain_only=same_domain_only,
             exclude_patterns=exclude_patterns,
             include_patterns=include_patterns,

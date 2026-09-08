@@ -95,7 +95,9 @@ class TestAsyncCrawler:
         await server.start_server()
 
         urls = [str(server.make_url(f"/delayed?id={number}")) for number in range(3)]
-        crawler = AsyncCrawler(max_concurrent=3, allow_private_hosts=True)
+        crawler = AsyncCrawler(
+            max_concurrent=3, allow_private_hosts=True, requests_per_second=1000
+        )
 
         try:
             started = perf_counter()
