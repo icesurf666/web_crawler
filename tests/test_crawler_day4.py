@@ -67,10 +67,12 @@ def crawler_with_pages(pages: dict[str, str], **kwargs) -> AsyncCrawler:
     kwargs.setdefault("requests_per_second", 1000)
     crawler = AsyncCrawler(max_concurrent=5, max_depth=1, **kwargs)
 
-    async def fake_fetch(url: str) -> str:
+    # Mock the low-level GET so the real fetch_url (robots enforcement +
+    # rate limiting) runs on top, and robots.txt is served from `pages`.
+    async def fake_get(url: str, timeout=None) -> str:
         return pages.get(url, "<html><body>page</body></html>")
 
-    crawler.fetch_url = fake_fetch
+    crawler._http_get = fake_get
     return crawler
 
 

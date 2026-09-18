@@ -23,7 +23,9 @@ class TestAsyncCrawler:
         await server.start_server()
 
         url = str(server.make_url("/page"))
-        crawler = AsyncCrawler(max_concurrent=1, allow_private_hosts=True)
+        crawler = AsyncCrawler(
+            max_concurrent=1, allow_private_hosts=True, respect_robots=False
+        )
 
         try:
             content = await crawler.fetch_url(url)
@@ -45,7 +47,9 @@ class TestAsyncCrawler:
         await server.start_server()
 
         url = str(server.make_url("/missing"))
-        crawler = AsyncCrawler(max_concurrent=1, allow_private_hosts=True)
+        crawler = AsyncCrawler(
+            max_concurrent=1, allow_private_hosts=True, respect_robots=False
+        )
 
         try:
             with pytest.raises(PermanentError) as exc_info:
@@ -70,7 +74,9 @@ class TestAsyncCrawler:
         await server.start_server()
 
         url = str(server.make_url("/slow"))
-        crawler = AsyncCrawler(max_concurrent=1, allow_private_hosts=True)
+        crawler = AsyncCrawler(
+            max_concurrent=1, allow_private_hosts=True, respect_robots=False
+        )
         crawler.timeout = aiohttp.ClientTimeout(connect=1, sock_read=0.05)
 
         try:
@@ -96,7 +102,10 @@ class TestAsyncCrawler:
 
         urls = [str(server.make_url(f"/delayed?id={number}")) for number in range(3)]
         crawler = AsyncCrawler(
-            max_concurrent=3, allow_private_hosts=True, requests_per_second=1000
+            max_concurrent=3,
+            allow_private_hosts=True,
+            requests_per_second=1000,
+            respect_robots=False,
         )
 
         try:

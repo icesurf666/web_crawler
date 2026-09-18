@@ -4,7 +4,7 @@ from aiohttp.test_utils import TestServer
 
 import retry_strategy
 from async_crawler import AsyncCrawler
-from errors import TransientError
+from errors import PermanentError, TransientError
 from url_filter import URLFilter
 
 
@@ -86,3 +86,35 @@ async def test_every_request_is_rate_limited(no_backoff_sleep) -> None:
 
     assert result == "OK"
     assert acquired["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_enforces_robots_for_direct_calls() -> None:
+    async def robots(request: web.Request) -> web.Response:
+        return web.Response(text="User-agent: *\nDisallow: /secret\n")
+
+    async def secret(request: web.Request) -> web.Response:
+        return web.Response(text="secret")
+
+    async def public(request: web.Request) -> web.Response:
+        return web.Response(text="public")
+
+    app = web.Application()
+    app.router.add_get("/robots.txt", robots)
+    app.router.add_get("/secret", secret)
+    app.router.add_get("/public", public)
+    server = TestServer(app)
+    await server.start_server()
+
+    crawler = AsyncCrawler(requests_per_second=1000, allow_private_hosts=True)
+
+    try:
+        # Allowed URL goes through.
+        assert await crawler.fetch_url(str(server.make_url("/public"))) == "public"
+        # Disallowed URL is blocked by robots.txt before hitting the network,
+        # even on a direct fetch_url call (not just inside crawl).
+        with pytest.raises(PermanentError):
+            await crawler.fetch_url(str(server.make_url("/secret")))
+    finally:
+        await crawler.close()
+        await server.close()

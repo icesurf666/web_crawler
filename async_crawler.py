@@ -154,20 +154,13 @@ class AsyncCrawler:
             chunks.append(chunk)
         return b"".join(chunks).decode(response.charset or "utf-8", errors="replace")
 
-    async def fetch_url(
+    async def _http_get(
         self, url: str, timeout: aiohttp.ClientTimeout | None = None
     ) -> str:
+        # Low-level HTTP GET: SSRF guard + error classification only. No robots
+        # and no rate limiting — this is what fetches robots.txt itself, and it
+        # is the primitive that the polite fetch_url builds on.
         await self._check_host_allowed(url)
-
-        # Politeness is enforced here so EVERY request obeys it — direct calls,
-        # batch fetches, retries and robots.txt alike (days 4-5).
-        domain = urlsplit(url).hostname
-        crawl_delay = (
-            self.robots.get_crawl_delay(url, self.user_agent)
-            if self.respect_robots
-            else 0.0
-        )
-        await self.rate_limiter.acquire(domain, crawl_delay)
 
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
@@ -195,6 +188,23 @@ class AsyncCrawler:
             raise TransientError(f"timeout for {url}", url=url) from error
         except aiohttp.ClientError as error:
             raise NetworkError(str(error), url=url) from error
+
+    async def fetch_url(
+        self, url: str, timeout: aiohttp.ClientTimeout | None = None
+    ) -> str:
+        # Public fetch: enforce robots.txt (load rules + can_fetch) and rate
+        # limits before EVERY request. Because retries and fetch_urls go through
+        # here, they stay polite automatically (day 4).
+        domain = urlsplit(url).hostname
+        crawl_delay = 0.0
+        if self.respect_robots:
+            await self.robots.fetch_robots(url)
+            if not self.robots.can_fetch(url, self.user_agent):
+                raise PermanentError("blocked by robots.txt", url=url)
+            crawl_delay = self.robots.get_crawl_delay(url, self.user_agent)
+
+        await self.rate_limiter.acquire(domain, crawl_delay)
+        return await self._http_get(url, timeout)
 
     async def fetch_urls(self, urls: list[str]) -> dict[str, str]:
         semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -226,9 +236,12 @@ class AsyncCrawler:
             await self.storage.close()
 
     async def _fetch_robots_text(self, url: str) -> str:
-        # fetch_url already rate-limits; robots.txt is just another request.
+        # Use the low-level GET, not fetch_url: fetch_url would try to load
+        # robots.txt to fetch robots.txt (infinite recursion). Still rate-limited
+        # here, because it is a real request to the host.
+        await self.rate_limiter.acquire(urlsplit(url).hostname)
         try:
-            return await self.fetch_url(url)
+            return await self._http_get(url)
         except CrawlerError as error:
             logger.debug("robots.txt unavailable for %s: %s", url, error)
             return ""
